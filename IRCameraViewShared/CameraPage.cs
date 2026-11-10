@@ -1,14 +1,15 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Windows.Graphics.Imaging;
+using Windows.Media.Capture;
+using Windows.Media.Capture.Frames;
+using Windows.Media.Devices;
 using Windows.Media.MediaProperties;
 using Windows.Storage;
-using Windows.Media.Capture;
-using Windows.Media.Devices;
-using Windows.Media.Capture.Frames;
-using Windows.Graphics.Imaging;
-using System.Threading.Tasks;
-using System.Collections.ObjectModel;
-
 
 #if NETFX_CORE
 // UWP code
@@ -33,21 +34,23 @@ namespace IRCameraView
 {
     public sealed partial class CameraPage : Page
     {
-        private CameraController camera;
-        static StorageFile videoFile;
-
-        public ObservableCollection<string> CameraNames { get; } = new ObservableCollection<string>();
+        private CameraController? camera;
+        private StorageFile? videoFile;
+        private SoftwareBitmap? _pendingFrame;
+        private int _uiUpdateQueued;
+        private bool _initialized;
+        private bool _suppressDeviceSelection;
+        private bool _isRecording;
+        private MediaFrameSourceKind _selectedKind = MediaFrameSourceKind.Infrared;
+        private DateTime _lastErrorAt = DateTime.MinValue;
+        private DispatcherTimer? _recordingTimer;
+        private DateTime _recordingStarted;
 
         public CameraPage()
         {
             InitializeComponent();
-            camera = new CameraController();
-            StartCapture();
-            ReloadDevices();
-#if NETFX_CORE
-#else
-            PreviewModeBox.SelectedIndex = 1;
-#endif
+            Loaded += CameraPage_Loaded;
+            Unloaded += CameraPage_Unloaded;
         }
 
         public Grid GetTitleBar()
@@ -55,172 +58,446 @@ namespace IRCameraView
             return TitleBarGripper;
         }
 
-        void ReloadDevices()
+        private async void CameraPage_Loaded(object sender, RoutedEventArgs e)
         {
-            DeviceComboBox.Items.Clear();
+            if (_initialized)
+                return;
 
-            var names = camera?.GetDeviceNames();
-            if (names == null) return;
-
-
-            foreach (var device in names)
-                DeviceComboBox.Items.Add(device);
-
-            if (DeviceComboBox.Items.Count > 0)
-                DeviceComboBox.SelectedIndex = 0;
-
-            if (camera?.Controller == null) return;
-
-            try
-            {
-                InfraredTorchControl torchControl = camera.Controller.InfraredTorchControl;
-
-                if (torchControl.IsSupported)
-                {
-                    TorchControlGrid.Visibility = Visibility.Visible;
-                    IRTorchBox.ItemsSource = torchControl.SupportedModes;
-                }
-
-                var photoControl = camera.Controller.AdvancedPhotoControl;
-                if (photoControl.Supported)
-                {
-                        PhotoModeBox.Items.Clear();
-                        foreach (var model in photoControl.SupportedModes)
-                    PhotoModeBox.Items.Add(model);
-                    PhotoModeGrid.Visibility = Visibility.Visible;
-                }
-            }
-            catch { }
-
-        }
-
-        void EnableMargin()
-        {
-            var margin = new Thickness(20);
-            margin.Top += 32;
-            margin.Right *= 2;
-            margin.Right += PhotoButton.Width;
-            ImageGrid.Margin = margin;
-
-            ImageViewbox.Stretch = Stretch.Uniform;
-#if NETFX_CORE
-ImageBorder.CornerRadius = new CornerRadius(0);
-#else
-            ImageBorder.CornerRadius = new CornerRadius(6);
-#endif
-
-        }
-
-        void DisableMargin()
-        {
-            ImageGrid.Margin = new Thickness(0);
-            ImageBorder.CornerRadius = new CornerRadius(0);
-
-            ImageViewbox.Stretch = Stretch.UniformToFill;
-        }
-
-        private void StartCapture()
-        {
+            _initialized = true;
+            camera = new CameraController();
+            camera.OnFrameReady += OnFrameReady;
+            camera.OnError += OnCameraError;
             ImageElement.Source = new SoftwareBitmapSource();
 
-            camera = new CameraController();
-            camera.OnFrameReady += OnFrameArrived;
+            await InitializeCameraAsync(MediaFrameSourceKind.Infrared);
         }
 
-        async Task InvokeOnMainThread(Action callback)
+        private void CameraPage_Unloaded(object sender, RoutedEventArgs e)
         {
-#if NETFX_CORE
-            await ImageElement.Dispatcher?.RunAsync(CoreDispatcherPriority.Normal ,() => callback());
-#else
-            ImageElement?.DispatcherQueue?.TryEnqueue(() => callback());
-#endif
+            _initialized = false;
+
+            var controller = camera;
+            camera = null;
+            if (controller == null)
+                return;
+
+            controller.OnFrameReady -= OnFrameReady;
+            controller.OnError -= OnCameraError;
+            controller.Dispose();
+            StopRecordingTimer();
+
+            Interlocked.Exchange(ref _pendingFrame, null)?.Dispose();
         }
 
-        private void OnFrameArrived(SoftwareBitmap bitmap)
+        private async Task InitializeCameraAsync(MediaFrameSourceKind kind)
         {
-            InvokeOnMainThread(async () =>
-            {
-                try
-                {
-                    var imageSource = (SoftwareBitmapSource)ImageElement.Source;
-                    await imageSource.SetBitmapAsync(bitmap);
-                }
-                catch { }
-            }).Wait();
-        }
+            if (camera == null)
+                return;
 
-        private void FrameFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (sender is ComboBox comboBox && camera != null)
-                camera.FrameFilter = (IRFrameFilter)comboBox.SelectedIndex;
-        }
+            _selectedKind = kind;
 
-        private void DeviceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (camera == null) return;
-            if (DeviceComboBox.SelectedIndex >= 0)
-                camera.SelectDeviceByIndex(DeviceComboBox.SelectedIndex);
-        }
+            // Most Windows Hello IR cameras alternate an illuminated and a
+            // dark frame. Showing both makes the preview flicker and look
+            // black half the time, so default IR to the illuminated stream.
+            FrameFilterBox.SelectedIndex = kind == MediaFrameSourceKind.Infrared ? 2 : 0;
+            HideStatus();
 
-        private async void TakePhoto_Click(object sender, RoutedEventArgs e)
-        {
-            camera.CaptureImage();
-            FlashScreenAsync();
-        }
-
-
-        private async void TakeVideo_Click(object sender, RoutedEventArgs e)
-        {
             try
             {
-                if (sender is ToggleButton toggleButton)
+                await camera.StopAsync();
+                var devices = await camera.LoadCamerasAsync(kind);
+                PopulateDeviceComboBox(devices);
+
+                if (devices.Count == 0)
                 {
-                    if (toggleButton.IsChecked ?? true)
-                    {
-                        videoFile = await KnownFolders.VideosLibrary.CreateFileAsync("IRRecording.mp4", CreationCollisionOption.GenerateUniqueName);
-                        var encodingProfile = MediaEncodingProfile.CreateMp4(VideoEncodingQuality.Auto);
+                    TorchControlGrid.Visibility = Visibility.Collapsed;
+                    PhotoModeGrid.Visibility = Visibility.Collapsed;
+                    ShowStatus($"No {kind.ToString().ToLowerInvariant()} camera was found. " +
+                               "Connect a camera or enable camera access in Windows Settings > Privacy & security > Camera.");
+                    return;
+                }
 
-                        var allVideoProfiles = camera?.Controller?.GetAvailableMediaStreamProperties(MediaStreamType.VideoRecord)?.OfType<VideoEncodingProperties>().ToList();
-                        if (allVideoProfiles == null) return;
+                await SelectDeviceAsync(0);
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Could not start the camera: {ex.Message}");
+            }
+        }
 
-                        var first = allVideoProfiles[0];
+        private void PopulateDeviceComboBox(System.Collections.Generic.IReadOnlyList<MediaFrameSourceGroup> devices)
+        {
+            _suppressDeviceSelection = true;
+            try
+            {
+                DeviceComboBox.Items.Clear();
+                foreach (var device in devices)
+                    DeviceComboBox.Items.Add(device.DisplayName);
 
-                        encodingProfile.Video.Width = first.Width;
-                        encodingProfile.Video.Height = first.Height;
+                DeviceComboBox.SelectedIndex = devices.Count > 0 ? 0 : -1;
+            }
+            finally
+            {
+                _suppressDeviceSelection = false;
+            }
+        }
 
-                        encodingProfile.Video.FrameRate.Numerator = first.FrameRate.Numerator;
-                        encodingProfile.Video.FrameRate.Denominator = first.FrameRate.Denominator;
+        private async Task SelectDeviceAsync(int index)
+        {
+            if (camera == null || index < 0 || index >= camera.Devices.Count)
+                return;
 
-                        encodingProfile.Audio = null;
+            try
+            {
+                await camera.SelectDeviceAsync(camera.Devices[index], _selectedKind);
+                UpdateCameraControls();
+                HideStatus();
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Could not open '{camera.Devices[index].DisplayName}': {ex.Message}");
+            }
+        }
 
-                        await camera?.MediaCapture?.StartRecordToStorageFileAsync(encodingProfile, videoFile);
-                    }
-                    else
-                    {
-                        await camera.MediaCapture.StopRecordAsync();
+        private void UpdateCameraControls()
+        {
+            TorchControlGrid.Visibility = Visibility.Collapsed;
+            PhotoModeGrid.Visibility = Visibility.Collapsed;
 
-                        var successDialog = new ContentDialog()
-                        {
-                            Title = "Recording Saved",
-                            Content = "Video saved to: " + videoFile.Path,
-                            CloseButtonText = "OK",
-                            XamlRoot = Content.XamlRoot
-                        };
-                        await successDialog.ShowAsync();
-                    }
+            var controller = camera?.Controller;
+            if (controller == null)
+                return;
+
+            try
+            {
+                var torchControl = controller.InfraredTorchControl;
+                if (torchControl.IsSupported && torchControl.SupportedModes.Count > 0)
+                {
+                    IRTorchBox.ItemsSource = torchControl.SupportedModes;
+                    IRTorchBox.SelectedIndex = 0;
+                    TorchControlGrid.Visibility = Visibility.Visible;
                 }
             }
             catch (Exception ex)
             {
-                var successDialog = new ContentDialog()
-                {
-                    Title = "Failed to record",
-                    Content = ex.Message,
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                };
-                await successDialog.ShowAsync();
+                // Many cameras (including the USB2.0 IR UVC WebCam) throw
+                // "The request is not supported" here. That is not fatal.
+                Debug.WriteLine($"IR torch is not supported: {ex.Message}");
             }
+
+            try
+            {
+                var photoControl = controller.AdvancedPhotoControl;
+                if (photoControl.Supported)
+                {
+                    PhotoModeBox.Items.Clear();
+                    foreach (var mode in photoControl.SupportedModes)
+                        PhotoModeBox.Items.Add(mode);
+
+                    if (PhotoModeBox.Items.Count > 0)
+                        PhotoModeBox.SelectedIndex = 0;
+
+                    PhotoModeGrid.Visibility = Visibility.Visible;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Advanced photo mode is not supported: {ex.Message}");
+            }
+        }
+
+        private void ShowStatus(string message)
+        {
+            StatusText.Text = message;
+            StatusBanner.Visibility = Visibility.Visible;
+        }
+
+        private void HideStatus()
+        {
+            StatusBanner.Visibility = Visibility.Collapsed;
+        }
+
+        private void OnCameraError(string message)
+        {
+            // The frame thread can report the same conversion failure many
+            // times per second; only surface it occasionally.
+            if ((DateTime.UtcNow - _lastErrorAt).TotalSeconds < 5)
+                return;
+
+            _lastErrorAt = DateTime.UtcNow;
+            _ = InvokeOnMainThread(() =>
+            {
+                ShowStatus($"Camera error: {message}");
+                return Task.CompletedTask;
+            });
+        }
+
+        private void OnFrameReady(SoftwareBitmap bitmap)
+        {
+            // Coalesce frames: keep only the newest one while the UI is busy.
+            // Ownership of the incoming bitmap moves into _pendingFrame.
+            var previous = Interlocked.Exchange(ref _pendingFrame, bitmap);
+            previous?.Dispose();
+
+            if (Interlocked.Exchange(ref _uiUpdateQueued, 1) == 0)
+                _ = InvokeOnMainThread(ProcessPendingFrameAsync);
+        }
+
+        private async Task ProcessPendingFrameAsync()
+        {
+            try
+            {
+                var bitmap = Interlocked.Exchange(ref _pendingFrame, null);
+                if (bitmap != null)
+                {
+                    try
+                    {
+                        if (ImageElement.Source is SoftwareBitmapSource source)
+                            await source.SetBitmapAsync(bitmap);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Displaying frame failed: {ex.Message}");
+                    }
+                    finally
+                    {
+                        bitmap.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _uiUpdateQueued, 0);
+
+                if (Volatile.Read(ref _pendingFrame) != null &&
+                    Interlocked.Exchange(ref _uiUpdateQueued, 1) == 0)
+                {
+                    _ = InvokeOnMainThread(ProcessPendingFrameAsync);
+                }
+            }
+        }
+
+        private Task InvokeOnMainThread(Func<Task> callback)
+        {
+            var tcs = new TaskCompletionSource<object?>();
+
+#if NETFX_CORE
+            _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, async () =>
+            {
+                try
+                {
+                    await callback();
+                    tcs.TrySetResult(null);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            });
+#else
+            if (!DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    await callback();
+                    tcs.TrySetResult(null);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            }))
+            {
+                tcs.TrySetCanceled();
+            }
+#endif
+
+            return tcs.Task;
+        }
+
+        private async void DeviceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressDeviceSelection || camera == null)
+                return;
+
+            await SelectDeviceAsync(DeviceComboBox.SelectedIndex);
+        }
+
+        private async void CameraType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_initialized || camera == null)
+                return;
+
+            var kind = GetSelectedCameraKind();
+            if (kind == _selectedKind)
+                return;
+
+            await InitializeCameraAsync(kind);
+        }
+
+        private async void Refresh_Click(object sender, RoutedEventArgs e)
+        {
+            if (camera == null)
+                return;
+
+            await InitializeCameraAsync(_selectedKind);
+        }
+
+        private void FrameFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ComboBox comboBox && camera != null && comboBox.SelectedIndex >= 0)
+                camera.FrameFilter = (IRFrameFilter)Math.Min(comboBox.SelectedIndex, 2);
+        }
+
+        private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ComboBox comboBox && camera != null)
+                camera.MappingMode = comboBox.SelectedIndex == 1 ? IRMappingMode.Green : IRMappingMode.None;
+        }
+
+        private void PreviewModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (PreviewModeBox.SelectedIndex == 1)
+                EnableMargin();
+            else if (PreviewModeBox.SelectedIndex == 0)
+                DisableMargin();
+        }
+
+        private void PhotoModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (camera?.Controller == null || PhotoModeBox.SelectedItem is not AdvancedPhotoMode mode)
+                return;
+
+            try
+            {
+                camera.Controller.AdvancedPhotoControl.Configure(new AdvancedPhotoCaptureSettings
+                {
+                    Mode = mode
+                });
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Could not change photo mode: {ex.Message}");
+            }
+        }
+
+        private void IRTorchBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (camera?.Controller == null || IRTorchBox.SelectedItem is not InfraredTorchMode mode)
+                return;
+
+            try
+            {
+                camera.Controller.InfraredTorchControl.CurrentMode = mode;
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Could not set the IR torch: {ex.Message}");
+            }
+        }
+
+        private async void TakePhoto_Click(object sender, RoutedEventArgs e)
+        {
+            if (camera == null)
+                return;
+
+            try
+            {
+                var path = await camera.CapturePhotoAsync();
+                await FlashScreenAsync();
+                ShowStatus($"Photo saved to {path}");
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Photo capture failed: {ex.Message}");
+            }
+        }
+
+        private async void TakeVideo_Click(object sender, RoutedEventArgs e)
+        {
+            if (camera == null || sender is not ToggleButton toggleButton)
+                return;
+
+            try
+            {
+                if (toggleButton.IsChecked == true)
+                {
+                    if (_isRecording)
+                        return;
+
+                    var folder = await GetVideosFolderAsync();
+                    videoFile = await folder.CreateFileAsync(
+                        $"IRRecording_{DateTime.Now:yyyyMMdd_HHmmss}.mp4",
+                        CreationCollisionOption.GenerateUniqueName);
+
+                    var encodingProfile = MediaEncodingProfile.CreateMp4(VideoEncodingQuality.Auto);
+                    var profiles = camera.Controller?
+                        .GetAvailableMediaStreamProperties(MediaStreamType.VideoRecord)?
+                        .OfType<VideoEncodingProperties>()
+                        .ToList();
+
+                    if (profiles == null || profiles.Count == 0)
+                        throw new InvalidOperationException("This camera does not expose a video recording profile.");
+
+                    var first = profiles[0];
+                    encodingProfile.Video.Width = first.Width;
+                    encodingProfile.Video.Height = first.Height;
+                    encodingProfile.Video.FrameRate.Numerator = first.FrameRate.Numerator;
+                    encodingProfile.Video.FrameRate.Denominator = first.FrameRate.Denominator;
+                    encodingProfile.Audio = null;
+
+                    await camera.MediaCapture!.StartRecordToStorageFileAsync(encodingProfile, videoFile);
+                    _isRecording = true;
+                    StartRecordingTimer();
+                    ShowStatus("Recording…");
+                }
+                else
+                {
+                    if (!_isRecording)
+                        return;
+
+                    await camera.MediaCapture!.StopRecordAsync();
+                    _isRecording = false;
+                    StopRecordingTimer();
+                    ShowStatus($"Recording saved to {videoFile?.Path}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _isRecording = false;
+                StopRecordingTimer();
+                toggleButton.IsChecked = false;
+                ShowStatus($"Video recording failed: {ex.Message}");
+            }
+        }
+
+        private void StartRecordingTimer()
+        {
+            StopRecordingTimer();
+            _recordingStarted = DateTime.Now;
+            VideoTimeLabel.Text = "00:00";
+
+            _recordingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _recordingTimer.Tick += RecordingTimer_Tick;
+            _recordingTimer.Start();
+        }
+
+        private void RecordingTimer_Tick(object? sender, object e)
+        {
+            var elapsed = DateTime.Now - _recordingStarted;
+            VideoTimeLabel.Text = elapsed.TotalHours >= 1
+                ? elapsed.ToString(@"hh\:mm\:ss")
+                : elapsed.ToString(@"mm\:ss");
+        }
+
+        private void StopRecordingTimer()
+        {
+            if (_recordingTimer == null)
+                return;
+
+            _recordingTimer.Stop();
+            _recordingTimer.Tick -= RecordingTimer_Tick;
+            _recordingTimer = null;
         }
 
         private async Task FlashScreenAsync()
@@ -249,33 +526,7 @@ ImageBorder.CornerRadius = new CornerRadius(0);
             await Task.Delay(fadeDuration);
         }
 
-        private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (sender is ComboBox && camera != null)
-                camera.MappingMode = (IRMappingMode)(sender as ComboBox).SelectedIndex;
-        }
-
-        private void PreviewModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (PreviewModeBox.SelectedIndex == 1) EnableMargin();
-            if (PreviewModeBox.SelectedIndex == 0) DisableMargin();
-        }
-
-        private void PhotoModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            camera.Controller.AdvancedPhotoControl.Configure(new AdvancedPhotoCaptureSettings
-            {
-                Mode = (PhotoModeBox.SelectedItem as AdvancedPhotoMode?) ?? AdvancedPhotoMode.Standard
-            });
-        }
-
-        private void IRTorchBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var selectedMode = (IRTorchBox.SelectedItem as InfraredTorchMode?) ?? InfraredTorchMode.AlternatingFrameIllumination;
-            camera.Controller.InfraredTorchControl.CurrentMode = selectedMode;
-        }
-
-        MediaFrameSourceKind GetSelectedCameraKind()
+        private MediaFrameSourceKind GetSelectedCameraKind()
         {
             switch (CameraType.SelectedIndex)
             {
@@ -286,10 +537,45 @@ ImageBorder.CornerRadius = new CornerRadius(0);
             }
         }
 
-        private void CameraType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private static async Task<StorageFolder> GetVideosFolderAsync()
         {
-            camera?.LoadCameras(GetSelectedCameraKind());
-            ReloadDevices();
+            try
+            {
+                return await KnownFolders.VideosLibrary.CreateFolderAsync(
+                    "IRCameraView", CreationCollisionOption.OpenIfExists);
+            }
+            catch (Exception)
+            {
+                var path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+                    "IRCameraView");
+                Directory.CreateDirectory(path);
+                return await StorageFolder.GetFolderFromPathAsync(path);
+            }
+        }
+
+        private void EnableMargin()
+        {
+            var margin = new Thickness(20);
+            margin.Top += 32;
+            margin.Right *= 2;
+            margin.Right += PhotoButton.Width;
+            ImageGrid.Margin = margin;
+
+            ImageViewbox.Stretch = Stretch.Uniform;
+#if NETFX_CORE
+            ImageBorder.CornerRadius = new CornerRadius(0);
+#else
+            ImageBorder.CornerRadius = new CornerRadius(6);
+#endif
+        }
+
+        private void DisableMargin()
+        {
+            ImageGrid.Margin = new Thickness(0);
+            ImageBorder.CornerRadius = new CornerRadius(0);
+
+            ImageViewbox.Stretch = Stretch.UniformToFill;
         }
     }
 }

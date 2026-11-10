@@ -26,7 +26,7 @@
             </Grid>
         </Grid>
         <Grid Grid.RowSpan="3" HorizontalAlignment="Right" Width="Auto" Margin="20">
-            <Button x:Name="PhotoButton" Click="TakePhoto_Click" Width="70" Height="70" Background="{ThemeResource SystemControlBaseHighAcrylicElementMediumHighBrush}">
+            <Button x:Name="PhotoButton" Click="TakePhoto_Click" Width="70" Height="70" AutomationProperties.Name="Take photo" Background="{ThemeResource SystemControlBaseHighAcrylicElementMediumHighBrush}">
                 <Button.Resources>
                     <Style TargetType="Button">
                         <Setter Property="CornerRadius" Value="45"/>
@@ -45,14 +45,17 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Spacing="10" Orientation="Horizontal">
-                    <ComboBox x:Name="DeviceComboBox" SelectionChanged="DeviceComboBox_SelectionChanged" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="CameraType" SelectedIndex="0" SelectionChanged="CameraType_SelectionChanged" VerticalAlignment="Center">
+                    <ComboBox x:Name="DeviceComboBox" SelectionChanged="DeviceComboBox_SelectionChanged" AutomationProperties.Name="Camera device" VerticalAlignment="Center"/>
+                    <Button x:Name="RefreshButton" Click="Refresh_Click" AutomationProperties.Name="Refresh camera list" ToolTipService.ToolTip="Refresh camera list" VerticalAlignment="Center" Padding="8">
+                        <SymbolIcon Symbol="Refresh"/>
+                    </Button>
+                    <ComboBox x:Name="CameraType" SelectedIndex="0" SelectionChanged="CameraType_SelectionChanged" AutomationProperties.Name="Camera type" VerticalAlignment="Center">
                         <ComboBoxItem>Infrared</ComboBoxItem>
                         <ComboBoxItem>Color</ComboBoxItem>
                         <ComboBoxItem>Depth</ComboBoxItem>
                     </ComboBox>
                     
-                    <ToggleButton Click="TakeVideo_Click">
+                    <ToggleButton x:Name="VideoToggleButton" Click="TakeVideo_Click" AutomationProperties.Name="Record video">
                         <ToggleButton.Content>
                             <SymbolIcon Symbol="Video" />
                         </ToggleButton.Content>
@@ -63,30 +66,46 @@
                 <StackPanel Spacing="10" Orientation="Horizontal" Grid.Column="2">
                     <StackPanel Name="TorchControlGrid" Spacing="10" Orientation="Horizontal" Visibility="Collapsed">
                         <TextBlock Text="IR Torch" VerticalAlignment="Center"/>
-                        <ComboBox Name="IRTorchBox"  SelectedIndex="0" SelectionChanged="IRTorchBox_SelectionChanged"/>
+                        <ComboBox Name="IRTorchBox" SelectedIndex="0" SelectionChanged="IRTorchBox_SelectionChanged" AutomationProperties.Name="IR torch mode"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Name="PhotoModeGrid" Spacing="10" Visibility="Collapsed">
                         <TextBlock Text="Photo Mode" VerticalAlignment="Center"/>
-                        <ComboBox Name="PhotoModeBox"  SelectedIndex="0" SelectionChanged="PhotoModeBox_SelectionChanged"/>
+                        <ComboBox Name="PhotoModeBox" SelectedIndex="0" SelectionChanged="PhotoModeBox_SelectionChanged" AutomationProperties.Name="Photo mode"/>
                     </StackPanel>
                     <TextBlock Text="Frame filter" VerticalAlignment="Center"/>
-                    <ComboBox SelectedIndex="0" SelectionChanged="FrameFilter_SelectionChanged" VerticalAlignment="Center">
+                    <ComboBox x:Name="FrameFilterBox" SelectedIndex="0" SelectionChanged="FrameFilter_SelectionChanged" AutomationProperties.Name="Frame filter" VerticalAlignment="Center">
                         <ComboBoxItem>None</ComboBoxItem>
                         <ComboBoxItem>Dark</ComboBoxItem>
                         <ComboBoxItem>Illuminated</ComboBoxItem>
                     </ComboBox>
                     <TextBlock Text="Vision" VerticalAlignment="Center"/>
-                    <ComboBox SelectedIndex="0" SelectionChanged="ComboBox_SelectionChanged" VerticalAlignment="Center">
+                    <ComboBox x:Name="MappingModeBox" SelectedIndex="0" SelectionChanged="ComboBox_SelectionChanged" AutomationProperties.Name="Vision mode" VerticalAlignment="Center">
                         <ComboBoxItem>Standard</ComboBoxItem>
                         <ComboBoxItem>Night</ComboBoxItem>
                     </ComboBox>
                     <TextBlock Text="Preview mode" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="PreviewModeBox" SelectedIndex="0" SelectionChanged="PreviewModeBox_SelectionChanged"  VerticalAlignment="Center">
+                    <ComboBox x:Name="PreviewModeBox" SelectedIndex="0" SelectionChanged="PreviewModeBox_SelectionChanged" AutomationProperties.Name="Preview mode" VerticalAlignment="Center">
                         <ComboBoxItem>Cover</ComboBoxItem>
                         <ComboBoxItem>Fit</ComboBoxItem>
                     </ComboBox>
                 </StackPanel>
             </Grid>
         </ScrollViewer>
+        <Border x:Name="StatusBanner"
+                Grid.RowSpan="3"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Top"
+                Margin="20,48,20,20"
+                Padding="14,10"
+                CornerRadius="8"
+                Background="#E6202020"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+            <TextBlock x:Name="StatusText"
+                       Foreground="White"
+                       TextWrapping="Wrap"
+                       MaxWidth="640"
+                       TextAlignment="Center"/>
+        </Border>
     </Grid>
 </Page>
