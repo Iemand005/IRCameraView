@@ -99,6 +99,10 @@ namespace IRCameraView
 		public async Task SelectDeviceAsync(MediaFrameSourceGroup sourceGroup, MediaFrameSourceKind kind, bool exclusive = true)
 		{
 			ThrowIfDisposed();
+
+			if (kind == MediaFrameSourceKind.Depth)
+				throw new NotSupportedException("Depth preview is not implemented yet. Please choose Infrared or Color.");
+
 			await StopAsync();
 
 			SourceGroup = sourceGroup;
