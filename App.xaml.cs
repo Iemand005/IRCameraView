@@ -1,4 +1,6 @@
-﻿using Microsoft.UI.Xaml;
+﻿using System;
+using System.IO;
+using Microsoft.UI.Xaml;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -17,6 +19,25 @@ namespace IRCameraView
         public App()
         {
             InitializeComponent();
+            UnhandledException += OnUnhandledException;
+        }
+
+        private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+        {
+            try
+            {
+                var folder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "IRCameraView");
+                Directory.CreateDirectory(folder);
+                File.AppendAllText(
+                    Path.Combine(folder, "crash.log"),
+                    $"[{DateTime.Now:O}] {e.Message}{Environment.NewLine}{e.Exception}{Environment.NewLine}{Environment.NewLine}");
+            }
+            catch
+            {
+                // Never let diagnostics hide the original failure.
+            }
         }
 
         /// <summary>
