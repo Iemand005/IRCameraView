@@ -6,18 +6,26 @@
     <RootNamespace>IRCameraView</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x86;x64;ARM64</Platforms>
-	<RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
-    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-	<WinUISDKReferences>false</WinUISDKReferences>
-	<EnableMsixTooling>true</EnableMsixTooling>
-	<Nullable>enable</Nullable>
-	<!--<PublishSingleFile>true</PublishSingleFile>-->
-	<!--<SelfContained>true</SelfContained>-->
-	  <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
-	<RuntimeIdentifier>win-x64</RuntimeIdentifier>
-	<!--<WindowsPackageType>None</WindowsPackageType>-->
-	<!--<CreateMSIXPackage>True</CreateMSIXPackage>-->
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>enable</Nullable>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+
+    <!--
+      Contributors do not have the author's signing certificate, so an
+      unsigned Debug build must work out of the box. Pass
+      -p:AppxPackageSigningEnabled=true -p:PackageCertificateThumbprint=...
+      when producing a signed MSIX.
+    -->
+    <AppxPackageSigningEnabled Condition="'$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+
+    <!-- Default to x64, but honour explicit solution/CI platform choices. -->
+    <RuntimeIdentifier Condition="'$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(Platform)' == 'x86'">win-x86</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
@@ -44,12 +52,10 @@
   <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
     <ProjectCapability Include="Msix" />
   </ItemGroup>
+
   <PropertyGroup Label="Globals">
     <WebView2EnableCsWinRTProjection>False</WebView2EnableCsWinRTProjection>
     <GenerateAppInstallerFile>True</GenerateAppInstallerFile>
-    <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
-    <PackageCertificateThumbprint>41F4A92EA2D2128BDFBA4694A00447670F37D35A</PackageCertificateThumbprint>
-    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
     <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
     <GenerateTestArtifacts>True</GenerateTestArtifacts>
@@ -58,7 +64,6 @@
     <AppInstallerUri>https://github.com/Iemand005/IRCameraView</AppInstallerUri>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <WebView2WinRTWrapSystemTypes>False</WebView2WinRTWrapSystemTypes>
-	  <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
   </PropertyGroup>
 
   <!--
@@ -69,6 +74,7 @@
   <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
     <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
   </PropertyGroup>
+
   <ItemGroup>
     <Compile Remove="IRCameraViewShared\**" />
     <Compile Remove="IRCameraViewUWP\**" />
@@ -79,39 +85,11 @@
     <Page Remove="IRCameraViewShared\**" />
     <Page Remove="IRCameraViewUWP\**" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Remove="C:\Users\Lasse\source\repos\IRCameraView\IRCameraViewShared\CameraController.cs" />
-    <Compile Remove="C:\Users\Lasse\source\repos\IRCameraView\IRCameraViewShared\CameraPage.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Page Remove="C:\Users\Lasse\source\repos\IRCameraView\IRCameraViewShared\CameraPage.xaml" />
-  </ItemGroup>
-  <ItemGroup>
-    <Resource Remove="C:\Users\Lasse\source\repos\IRCameraView\IRCameraViewShared\CameraPage.xaml" />
-  </ItemGroup>
+
   <ItemGroup>
     <PRIResource Remove="IRCameraViewShared\**" />
-  </ItemGroup>
-  <ItemGroup>
     <PRIResource Remove="IRCameraViewUWP\**" />
   </ItemGroup>
+
   <Import Project="IRCameraViewShared\IRCameraViewShared.projitems" Label="Shared" />
-  <ItemGroup>
-    <Reference Update="C:\Users\Lasse\.nuget\packages\microsoft.web.webview2\1.0.3179.45\buildTransitive\..\\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.Core.dll">
-      <Private>False</Private>
-      <EmbedInteropTypes>False</EmbedInteropTypes>
-    </Reference>
-  </ItemGroup>
-  <ItemGroup>
-    <Reference Update="C:\Users\Lasse\.nuget\packages\microsoft.web.webview2\1.0.3179.45\buildTransitive\..\\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.WinForms.dll">
-      <Private>False</Private>
-      <EmbedInteropTypes>False</EmbedInteropTypes>
-    </Reference>
-  </ItemGroup>
-  <ItemGroup>
-    <Reference Update="C:\Users\Lasse\.nuget\packages\microsoft.web.webview2\1.0.3179.45\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll">
-      <EmbedInteropTypes>False</EmbedInteropTypes>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
 </Project>
